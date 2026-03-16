@@ -1,2 +1,0 @@
-# packages.txt – nur eine Zeile!
-libgl1
