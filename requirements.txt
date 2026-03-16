@@ -1,5 +1,7 @@
-streamlit==1.42.0
-ultralytics==8.3.18
-opencv-python-headless==4.9.0.80     # älter → weniger GL-Probleme
-pillow==10.4.0
-numpy==1.26.4
+streamlit>=1.33.0
+ultralytics>=8.2.0
+torch>=2.2.0
+torchvision>=0.17.0
+pillow>=10.0.0
+opencv-python>=4.9.0
+numpy>=1.26.0
