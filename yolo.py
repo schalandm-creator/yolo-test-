@@ -5,125 +5,151 @@ import io
 import uuid
 from datetime import datetime
 
-st.set_page_config(page_title="Fundbüro – lokal mit YOLO", layout="wide")
-st.title("🧥 Fundbüro (lokale Version – ohne Datenbank)")
+# ────────────────────────────────────────────────
+# Seiten-Konfiguration
+# ────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Fundbüro – YOLO Erkennung",
+    page_icon="🧥",
+    layout="wide"
+)
 
-st.info("Alle Fundstücke werden nur im Browser gespeichert (session_state). Beim Neustart oder Schließen des Tabs sind sie weg.")
+st.title("🧥 Fundbüro – KI Erkennung mit YOLO")
+st.caption("Bilder hochladen → YOLO erkennt Gegenstände → Galerie im Browser (Session)")
+
+st.info("Diese App speichert **nichts** dauerhaft. Alle Daten verschwinden, sobald du den Tab schließt oder die Seite neu lädst.")
 
 # ────────────────────────────────────────────────
-# YOLO Modell laden (cached)
+# YOLO Modell einmal laden (cached)
 # ────────────────────────────────────────────────
 @st.cache_resource
-def load_yolo_model():
-    return YOLO("yolo11n.pt")   # oder "yolo11s.pt" / "yolo12n.pt" – nano ist am schnellsten
+def get_yolo_model():
+    try:
+        return YOLO("yolo11n.pt")          # nano – schnell & leicht
+        # Alternativen: "yolo11s.pt", "yolo12n.pt"
+    except Exception as e:
+        st.error(f"Fehler beim Laden des YOLO-Modells:\n{e}")
+        st.stop()
 
-model = load_yolo_model()
+model = get_yolo_model()
 
 # ────────────────────────────────────────────────
-# Session State initialisieren
+# Session State für Fundstücke
 # ────────────────────────────────────────────────
-if "fund_items" not in st.session_state:
-    st.session_state.fund_items = []
+if "items" not in st.session_state:
+    st.session_state.items = []
 
 # ────────────────────────────────────────────────
 # Tabs
 # ────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📤 Neues Fundstück hochladen", "🖼️ Galerie"])
+tab_upload, tab_gallery = st.tabs(["📸 Neues Fundstück", "🖼️ Galerie"])
 
 # ────────────────────────────────────────────────
-# TAB 1: Hochladen & Analysieren
+# Tab 1: Hochladen & Analysieren
 # ────────────────────────────────────────────────
-with tab1:
-    uploaded_file = st.file_uploader("Bild des Fundstücks hochladen", type=["jpg", "jpeg", "png"])
+with tab_upload:
+    uploaded_file = st.file_uploader(
+        "Bild hochladen (jpg, png, jpeg)",
+        type=["jpg", "jpeg", "png"]
+    )
 
     if uploaded_file is not None:
-        # Bild anzeigen
+        # Bild laden & anzeigen
         image_bytes = uploaded_file.read()
         image = Image.open(io.BytesIO(image_bytes))
         st.image(image, caption="Hochgeladenes Bild", use_container_width=True)
 
         # YOLO Analyse
-        with st.spinner("YOLO erkennt Gegenstände ..."):
-            results = model(image, conf=0.35, iou=0.45)
-            annotated_img = results[0].plot()  # Bild mit Bounding Boxes
+        with st.spinner("YOLO analysiert das Bild ..."):
+            try:
+                results = model(image, conf=0.35, iou=0.45)
+                annotated = results[0].plot() if results[0].boxes else image
 
-            st.image(annotated_img, caption="YOLO-Erkennung", use_container_width=True)
+                st.image(annotated, caption="YOLO-Erkennung", use_container_width=True)
 
-            # Erkannte Klassen sammeln
-            detected = []
-            for box in results[0].boxes:
-                cls_id = int(box.cls)
-                label = model.names[cls_id]
-                conf = float(box.conf)
-                detected.append({"class": label, "confidence": conf})
+                # Erkannte Klassen sammeln
+                detected_classes = []
+                confidences = []
 
-            if detected:
-                st.success(f"{len(detected)} Gegenstände erkannt")
-                for item in detected:
-                    st.write(f"• {item['class']} ({item['confidence']:.1%})")
-            else:
-                st.warning("Keine Gegenstände mit ausreichender Sicherheit erkannt.")
+                for box in results[0].boxes:
+                    cls_id = int(box.cls)
+                    label = model.names[cls_id]
+                    conf = float(box.conf)
+                    detected_classes.append(label)
+                    confidences.append(conf)
 
-            # Notizen
-            notes = st.text_input("Zusätzliche Notizen / Beschreibung", "")
+                # Duplikate entfernen, aber Häufigkeit beibehalten
+                unique_classes = list(dict.fromkeys(detected_classes))
 
-            if st.button("💾 Als Fundstück speichern"):
-                # Bild als Bytes speichern (für Galerie)
-                item_id = str(uuid.uuid4())
-                entry = {
-                    "id": item_id,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "original_name": uploaded_file.name,
-                    "image_bytes": image_bytes,          # ← Bilddaten im RAM
-                    "detected_classes": [d["class"] for d in detected],
-                    "notes": notes.strip() or "Keine Notiz"
-                }
+                if detected_classes:
+                    st.success(f"Erkannt: **{', '.join(unique_classes)}**")
+                    avg_conf = sum(confidences) / len(confidences) if confidences else 0
+                    st.write(f"Durchschnittliche Sicherheit: **{avg_conf:.1%}**")
+                else:
+                    st.warning("Keine Objekte mit ausreichender Sicherheit erkannt.")
 
-                st.session_state.fund_items.append(entry)
-                st.success("Fundstück gespeichert! (nur in diesem Browser-Tab sichtbar)")
-                st.balloons()
+                # Notizen
+                notes = st.text_input("Zusätzliche Notizen (z. B. Farbe, Zustand, Fundort)", "")
+
+                if st.button("💾 Als Fundstück speichern"):
+                    entry = {
+                        "id": str(uuid.uuid4()),
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "filename": uploaded_file.name,
+                        "image_bytes": image_bytes,
+                        "detected_classes": unique_classes,
+                        "avg_confidence": avg_conf,
+                        "notes": notes.strip() or "Keine Notiz"
+                    }
+                    st.session_state.items.append(entry)
+                    st.success("Gespeichert! (nur in diesem Browser sichtbar)")
+                    st.balloons()
+
+            except Exception as e:
+                st.error(f"Fehler bei der YOLO-Analyse:\n{e}")
 
 # ────────────────────────────────────────────────
-# TAB 2: Galerie + Filter
+# Tab 2: Galerie + Filter
 # ────────────────────────────────────────────────
-with tab2:
-    st.subheader("Deine Fundstücke-Galerie")
+with tab_gallery:
+    st.subheader(f"Galerie ({len(st.session_state.items)} Fundstücke)")
 
-    if not st.session_state.fund_items:
+    if not st.session_state.items:
         st.info("Noch keine Fundstücke gespeichert.")
     else:
-        # Alle Klassen sammeln für Filter
+        # Alle Klassen für Filter sammeln
         all_classes = set()
-        for item in st.session_state.fund_items:
+        for item in st.session_state.items:
             all_classes.update(item["detected_classes"])
         all_classes = sorted(list(all_classes))
 
-        # Filter
-        selected_classes = st.multiselect(
-            "Nach Kategorie filtern",
+        selected = st.multiselect(
+            "Nach erkannten Gegenständen filtern",
             options=all_classes,
             default=all_classes
         )
 
-        filtered_items = [
-            item for item in st.session_state.fund_items
-            if not selected_classes or any(c in item["detected_classes"] for c in selected_classes)
+        filtered = [
+            item for item in st.session_state.items
+            if not selected or any(c in item["detected_classes"] for c in selected)
         ]
 
-        if not filtered_items:
+        if not filtered:
             st.warning("Keine Fundstücke passen zum Filter.")
         else:
             cols = st.columns(3)
-            for i, item in enumerate(filtered_items):
+            for i, item in enumerate(filtered):
                 col = cols[i % 3]
                 img = Image.open(io.BytesIO(item["image_bytes"]))
                 col.image(img, use_column_width=True)
-                col.markdown(f"**{', '.join(item['detected_classes']) or 'unbekannt'}**")
+
+                classes_str = ", ".join(item["detected_classes"]) or "keine Erkennung"
+                col.markdown(f"**{classes_str}** ({item['avg_confidence']:.1%})")
                 if item["notes"]:
                     col.caption(item["notes"])
                 col.caption(item["timestamp"])
 
-    # Alles löschen Button (für Tests)
-    if st.button("🗑️ Alle Fundstücke löschen (Session zurücksetzen)"):
-        st.session_state.fund_items = []
+    # Reset-Button
+    if st.button("🗑️ Alle Fundstücke löschen"):
+        st.session_state.items = []
         st.rerun()
