@@ -1,155 +1,147 @@
+# app.py
+
 import streamlit as st
-from ultralytics import YOLO
-from PIL import Image
-import io
-import uuid
-from datetime import datetime
 
 # ────────────────────────────────────────────────
-# Seiten-Konfiguration
+# Streamlit zuerst komplett initialisieren
 # ────────────────────────────────────────────────
 st.set_page_config(
     page_title="Fundbüro – YOLO Erkennung",
     page_icon="🧥",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🧥 Fundbüro – KI Erkennung mit YOLO")
-st.caption("Bilder hochladen → YOLO erkennt Gegenstände → Galerie im Browser (Session)")
+st.title("🧥 Fundbüro – lokale YOLO Erkennung")
+st.caption("2026 – ohne Datenbank – nur Browser-Session")
 
-st.info("Diese App speichert **nichts** dauerhaft. Alle Daten verschwinden, sobald du den Tab schließt oder die Seite neu lädst.")
+st.info("""
+Diese Version lädt YOLO **erst nach** dem Streamlit-Setup,  
+um den bekannten Streamlit-Watcher + Torch-Konflikt zu vermeiden.
+""")
 
 # ────────────────────────────────────────────────
-# YOLO Modell einmal laden (cached)
+# Jetzt erst Torch / ultralytics / cv2 laden
 # ────────────────────────────────────────────────
-@st.cache_resource
-def get_yolo_model():
+with st.spinner("Lade YOLO-Modell (einmalig) ..."):
     try:
-        return YOLO("yolo11n.pt")          # nano – schnell & leicht
-        # Alternativen: "yolo11s.pt", "yolo12n.pt"
+        from ultralytics import YOLO
+        from PIL import Image
+        import io
+        import uuid
+        from datetime import datetime
+
+        @st.cache_resource(show_spinner=False)
+        def load_yolo():
+            # yolo11n = schnell & leicht, yolo11s = besser genau
+            return YOLO("yolo11n.pt")
+
+        model = load_yolo()
+        st.success("YOLO erfolgreich geladen", icon="✅")
+
     except Exception as e:
-        st.error(f"Fehler beim Laden des YOLO-Modells:\n{e}")
+        st.error(f"Laden fehlgeschlagen\n\n{e}")
         st.stop()
 
-model = get_yolo_model()
-
 # ────────────────────────────────────────────────
-# Session State für Fundstücke
+# Session State
 # ────────────────────────────────────────────────
-if "items" not in st.session_state:
-    st.session_state.items = []
+if "fund_items" not in st.session_state:
+    st.session_state.fund_items = []
 
 # ────────────────────────────────────────────────
 # Tabs
 # ────────────────────────────────────────────────
-tab_upload, tab_gallery = st.tabs(["📸 Neues Fundstück", "🖼️ Galerie"])
+tab1, tab2 = st.tabs(["📤 Hochladen & Analysieren", "🖼️ Galerie"])
 
 # ────────────────────────────────────────────────
-# Tab 1: Hochladen & Analysieren
+# Tab 1 – Upload
 # ────────────────────────────────────────────────
-with tab_upload:
-    uploaded_file = st.file_uploader(
-        "Bild hochladen (jpg, png, jpeg)",
+with tab1:
+    uploaded = st.file_uploader(
+        "Bild hochladen (jpg, jpeg, png)",
         type=["jpg", "jpeg", "png"]
     )
 
-    if uploaded_file is not None:
-        # Bild laden & anzeigen
-        image_bytes = uploaded_file.read()
-        image = Image.open(io.BytesIO(image_bytes))
-        st.image(image, caption="Hochgeladenes Bild", use_container_width=True)
+    if uploaded:
+        bytes_data = uploaded.read()
+        img = Image.open(io.BytesIO(bytes_data))
 
-        # YOLO Analyse
-        with st.spinner("YOLO analysiert das Bild ..."):
+        st.image(img, caption="Originalbild", use_container_width=True)
+
+        with st.spinner("Analyse läuft ..."):
             try:
-                results = model(image, conf=0.35, iou=0.45)
-                annotated = results[0].plot() if results[0].boxes else image
+                results = model(img, conf=0.35, iou=0.45)
+                annotated = results[0].plot() if results[0].boxes else img
 
-                st.image(annotated, caption="YOLO-Erkennung", use_container_width=True)
+                st.image(annotated, caption="YOLO-Ergebnis", use_container_width=True)
 
-                # Erkannte Klassen sammeln
-                detected_classes = []
-                confidences = []
+                classes = [model.names[int(box.cls)] for box in results[0].boxes]
+                unique_classes = list(dict.fromkeys(classes))
 
-                for box in results[0].boxes:
-                    cls_id = int(box.cls)
-                    label = model.names[cls_id]
-                    conf = float(box.conf)
-                    detected_classes.append(label)
-                    confidences.append(conf)
-
-                # Duplikate entfernen, aber Häufigkeit beibehalten
-                unique_classes = list(dict.fromkeys(detected_classes))
-
-                if detected_classes:
+                if unique_classes:
                     st.success(f"Erkannt: **{', '.join(unique_classes)}**")
-                    avg_conf = sum(confidences) / len(confidences) if confidences else 0
-                    st.write(f"Durchschnittliche Sicherheit: **{avg_conf:.1%}**")
                 else:
-                    st.warning("Keine Objekte mit ausreichender Sicherheit erkannt.")
+                    st.warning("Keine Objekte mit ausreichender Sicherheit gefunden.")
 
-                # Notizen
-                notes = st.text_input("Zusätzliche Notizen (z. B. Farbe, Zustand, Fundort)", "")
+                notes = st.text_input("Notizen / Beschreibung", "")
 
-                if st.button("💾 Als Fundstück speichern"):
+                if st.button("Als Fundstück speichern"):
                     entry = {
                         "id": str(uuid.uuid4()),
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "filename": uploaded_file.name,
-                        "image_bytes": image_bytes,
-                        "detected_classes": unique_classes,
-                        "avg_confidence": avg_conf,
-                        "notes": notes.strip() or "Keine Notiz"
+                        "filename": uploaded.name,
+                        "image_bytes": bytes_data,
+                        "classes": unique_classes,
+                        "notes": notes.strip() or "—"
                     }
-                    st.session_state.items.append(entry)
-                    st.success("Gespeichert! (nur in diesem Browser sichtbar)")
+                    st.session_state.fund_items.append(entry)
+                    st.success("Gespeichert (nur in diesem Browser sichtbar)")
                     st.balloons()
 
             except Exception as e:
-                st.error(f"Fehler bei der YOLO-Analyse:\n{e}")
+                st.error(f"Analyse-Fehler\n\n{e}")
 
 # ────────────────────────────────────────────────
-# Tab 2: Galerie + Filter
+# Tab 2 – Galerie + Filter
 # ────────────────────────────────────────────────
-with tab_gallery:
-    st.subheader(f"Galerie ({len(st.session_state.items)} Fundstücke)")
+with tab2:
+    st.subheader(f"Galerie – {len(st.session_state.fund_items)} Einträge")
 
-    if not st.session_state.items:
-        st.info("Noch keine Fundstücke gespeichert.")
+    if not st.session_state.fund_items:
+        st.info("Noch keine Fundstücke vorhanden.")
     else:
-        # Alle Klassen für Filter sammeln
+        # Filter-Optionen
         all_classes = set()
-        for item in st.session_state.items:
-            all_classes.update(item["detected_classes"])
-        all_classes = sorted(list(all_classes))
+        for item in st.session_state.fund_items:
+            all_classes.update(item["classes"])
 
         selected = st.multiselect(
-            "Nach erkannten Gegenständen filtern",
-            options=all_classes,
-            default=all_classes
+            "Nach Kategorie filtern",
+            sorted(all_classes),
+            default=list(all_classes)
         )
 
         filtered = [
-            item for item in st.session_state.items
-            if not selected or any(c in item["detected_classes"] for c in selected)
+            it for it in st.session_state.fund_items
+            if not selected or any(c in it["classes"] for c in selected)
         ]
 
-        if not filtered:
-            st.warning("Keine Fundstücke passen zum Filter.")
-        else:
-            cols = st.columns(3)
-            for i, item in enumerate(filtered):
-                col = cols[i % 3]
-                img = Image.open(io.BytesIO(item["image_bytes"]))
-                col.image(img, use_column_width=True)
+        cols = st.columns(3)
+        for i, item in enumerate(filtered):
+            col = cols[i % 3]
+            img = Image.open(io.BytesIO(item["image_bytes"]))
+            col.image(img, use_column_width=True)
 
-                classes_str = ", ".join(item["detected_classes"]) or "keine Erkennung"
-                col.markdown(f"**{classes_str}** ({item['avg_confidence']:.1%})")
-                if item["notes"]:
-                    col.caption(item["notes"])
-                col.caption(item["timestamp"])
+            txt = ", ".join(item["classes"]) or "keine Erkennung"
+            col.markdown(f"**{txt}**")
+            if item["notes"]:
+                col.caption(item["notes"])
+            col.caption(item["timestamp"])
 
-    # Reset-Button
-    if st.button("🗑️ Alle Fundstücke löschen"):
-        st.session_state.items = []
+    if st.button("Alles löschen"):
+        st.session_state.fund_items = []
         st.rerun()
+
+st.divider()
+st.caption("Lokale Version – Daten nur im Browser (session_state)")
