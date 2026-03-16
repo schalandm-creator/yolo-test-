@@ -1,6 +1,5 @@
-# requirements.txt
-streamlit>=1.42.0,<1.43.0
+streamlit>=1.42.0
 ultralytics>=8.3.0
-opencv-python-headless>=4.10.0
+opencv-python-headless>=4.10.0,<5.0.0
 pillow>=10.0.0
-numpy>=1.26.0,<2.0.0               # vermeidet numpy-2.3+ Konflikte mit älteren opencv
+numpy>=1.26.0,<2.0.0          # vermeidet numpy-2-Konflikte
