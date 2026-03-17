@@ -1,7 +1,5 @@
-streamlit==1.37.1
-ultralytics==8.2.103
-torch==2.3.1
-torchvision==0.18.1
+streamlit==1.42.0
+transformers==4.45.2
+torch==2.4.1
 pillow==10.4.0
-opencv-python-headless==4.10.0.84
-numpy==1.26.4
+pandas==2.2.3
